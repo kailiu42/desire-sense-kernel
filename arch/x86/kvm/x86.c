@@ -356,7 +356,7 @@ EXPORT_SYMBOL_GPL(kvm_set_cr0);
 
 void kvm_lmsw(struct kvm_vcpu *vcpu, unsigned long msw)
 {
-	kvm_set_cr0(vcpu, (vcpu->arch.cr0 & ~0x0ful) | (msw & 0x0f));
+	kvm_set_cr0(vcpu, (vcpu->arch.cr0 & ~0x0eul) | (msw & 0x0f));
 }
 EXPORT_SYMBOL_GPL(kvm_lmsw);
 
@@ -543,10 +543,10 @@ static void set_efer(struct kvm_vcpu *vcpu, u64 efer)
 		}
 	}
 
-	kvm_x86_ops->set_efer(vcpu, efer);
-
 	efer &= ~EFER_LMA;
 	efer |= vcpu->arch.shadow_efer & EFER_LMA;
+
+	kvm_x86_ops->set_efer(vcpu, efer);
 
 	vcpu->arch.shadow_efer = efer;
 
@@ -581,14 +581,22 @@ static int do_set_msr(struct kvm_vcpu *vcpu, unsigned index, u64 *data)
 
 static void kvm_write_wall_clock(struct kvm *kvm, gpa_t wall_clock)
 {
-	static int version;
+	int version;
+	int r;
 	struct pvclock_wall_clock wc;
 	struct timespec boot;
 
 	if (!wall_clock)
 		return;
 
-	version++;
+	r = kvm_read_guest(kvm, wall_clock, &version, sizeof(version));
+	if (r)
+		return;
+
+	if (version & 1)
+		++version;  /* first time write, random junk */
+
+	++version;
 
 	kvm_write_guest(kvm, wall_clock, &version, sizeof(version));
 
@@ -1435,6 +1443,7 @@ static int kvm_vcpu_ioctl_get_cpuid2(struct kvm_vcpu *vcpu,
 {
 	int r;
 
+	vcpu_load(vcpu);
 	r = -E2BIG;
 	if (cpuid->nent < vcpu->arch.cpuid_nent)
 		goto out;
@@ -1446,6 +1455,7 @@ static int kvm_vcpu_ioctl_get_cpuid2(struct kvm_vcpu *vcpu,
 
 out:
 	cpuid->nent = vcpu->arch.cpuid_nent;
+	vcpu_put(vcpu);
 	return r;
 }
 
@@ -1505,7 +1515,7 @@ static void do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 	const u32 kvm_supported_word6_x86_features =
 		F(LAHF_LM) | F(CMP_LEGACY) | F(SVM) | 0 /* ExtApicSpace */ |
 		F(CR8_LEGACY) | F(ABM) | F(SSE4A) | F(MISALIGNSSE) |
-		F(3DNOWPREFETCH) | 0 /* OSVW */ | 0 /* IBS */ | F(SSE5) |
+		F(3DNOWPREFETCH) | 0 /* OSVW */ | 0 /* IBS */ | F(XOP) |
 		0 /* SKINIT */ | 0 /* WDT */;
 
 	/* all calls to cpuid_count() should be made on the same cpu */
@@ -1695,6 +1705,7 @@ static int kvm_vcpu_ioctl_x86_setup_mce(struct kvm_vcpu *vcpu,
 	int r;
 	unsigned bank_num = mcg_cap & 0xff, bank;
 
+	vcpu_load(vcpu);
 	r = -EINVAL;
 	if (!bank_num || bank_num >= KVM_MAX_MCE_BANKS)
 		goto out;
@@ -1709,6 +1720,7 @@ static int kvm_vcpu_ioctl_x86_setup_mce(struct kvm_vcpu *vcpu,
 	for (bank = 0; bank < bank_num; bank++)
 		vcpu->arch.mce_banks[bank*4] = ~(u64)0;
 out:
+	vcpu_put(vcpu);
 	return r;
 }
 
@@ -1911,7 +1923,9 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 		r = -EFAULT;
 		if (copy_from_user(&mce, argp, sizeof mce))
 			goto out;
+		vcpu_load(vcpu);
 		r = kvm_vcpu_ioctl_x86_set_mce(vcpu, &mce);
+		vcpu_put(vcpu);
 		break;
 	}
 	default:
@@ -2118,6 +2132,7 @@ static int kvm_vm_ioctl_get_pit2(struct kvm *kvm, struct kvm_pit_state2 *ps)
 		sizeof(ps->channels));
 	ps->flags = kvm->arch.vpit->pit_state.flags;
 	mutex_unlock(&kvm->arch.vpit->pit_state.lock);
+	memset(&ps->reserved, 0, sizeof(ps->reserved));
 	return r;
 }
 
@@ -2455,6 +2470,7 @@ long kvm_arch_vm_ioctl(struct file *filp,
 		now_ns = timespec_to_ns(&now);
 		user_ns.clock = kvm->arch.kvmclock_offset + now_ns;
 		user_ns.flags = 0;
+		memset(&user_ns.pad, 0, sizeof(user_ns.pad));
 
 		r = -EFAULT;
 		if (copy_to_user(argp, &user_ns, sizeof(user_ns)))
@@ -2743,6 +2759,9 @@ int emulator_get_dr(struct x86_emulate_ctxt *ctxt, int dr, unsigned long *dest)
 {
 	struct kvm_vcpu *vcpu = ctxt->vcpu;
 
+	if (!kvm_x86_ops->get_dr)
+		return X86EMUL_UNHANDLEABLE;
+
 	switch (dr) {
 	case 0 ... 3:
 		*dest = kvm_x86_ops->get_dr(vcpu, dr);
@@ -2757,6 +2776,9 @@ int emulator_set_dr(struct x86_emulate_ctxt *ctxt, int dr, unsigned long value)
 {
 	unsigned long mask = (ctxt->mode == X86EMUL_MODE_PROT64) ? ~0ULL : ~0U;
 	int exception;
+
+	if (!kvm_x86_ops->set_dr)
+		return X86EMUL_UNHANDLEABLE;
 
 	kvm_x86_ops->set_dr(ctxt->vcpu, dr, value & mask, &exception);
 	if (exception) {
