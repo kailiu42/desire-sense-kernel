@@ -1,13 +1,71 @@
 #!/bin/bash
 
-OUTPUT_DIR=./out
+ZB_DIR=./zipbuild
 
-#make distclean
-#cp config.my .config
-#make oldconfig
-#make -j5
+K_DIR=kernel
+M_DIR=system/lib/modules
 
-make modules_install INSTALL_MOD_PATH=${OUTPUT_DIR} INSTALL_MOD_STRIP=1
-cp arch/arm/boot/zImage ${OUTPUT_DIR}
+SKELETON=skeleton.zip
+ZIP=kernel-2.6.32-$(date +%Y%m%d).zip
 
-find ${OUTPUT_DIR} -type f -name "*.ko" -exec mv {} ${OUTPUT_DIR} \;
+
+clean_kernel()
+{
+	make distclean
+}
+
+clean_temp()
+{
+	rm -rf ${ZB_DIR}/lib
+	rm -rf ${ZB_DIR}/kernel
+	rm -rf ${ZB_DIR}/system
+	rm -f ${ZB_DIR}/kernel*.zip
+}
+
+build_kernel()
+{
+	cp config.my .config
+	make oldconfig
+	make -j5
+}
+
+build_zip()
+{
+	mkdir -p ${ZB_DIR}/${K_DIR}
+	mkdir -p ${ZB_DIR}/${M_DIR}
+
+	cp arch/arm/boot/zImage ${ZB_DIR}/${K_DIR}/
+	make modules_install INSTALL_MOD_PATH=${ZB_DIR} INSTALL_MOD_STRIP=1
+	find ${ZB_DIR}/lib/modules -type f -name "*.ko" -exec mv {} ${ZB_DIR}/${M_DIR} \;
+
+	cd ${ZB_DIR}
+	cp ${SKELETON} ${ZIP}
+	zip -r ${ZIP} ${K_DIR} ${M_DIR}
+	cd -
+}
+
+case $1 in
+	ck)
+		clean_kernel
+		;;
+	ct)
+		clean_temp
+		;;
+	clean)
+		clean_kernel
+		clean_temp
+		;;
+	bk)
+		build_kernel
+		;;
+	bz):
+		build_zip
+		;;
+	all)
+		clean_kernel
+		clean_temp
+		build_kernel
+		build_zip
+		;;
+	*)
+esac
