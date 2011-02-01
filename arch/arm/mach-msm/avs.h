@@ -29,7 +29,7 @@
 #ifndef AVS_H
 #define AVS_H
 #define	USE_OVERCLOCKING	1
-/* #define	USE_EXTREMEOVERCLOCKING	1 */
+#define	USE_EXTREMEOVERCLOCKING	1
 
 #define VOLTAGE_MIN  950 /* mV */
 #define VOLTAGE_MAX  1300
