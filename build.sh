@@ -68,4 +68,12 @@ case $1 in
 		build_zip
 		;;
 	*)
+		echo "Usage: build.sh <target>"
+		echo "Targets are:"
+		echo "	ck	==>    Clean compiled kernel tree, calls make distclean"
+		echo "	ct	==>    Clean generated zip files etc. under zipbuild directory"
+		echo "	clean	==>    Clean all, run ck and ct"
+		echo "	bk	==>    Build kernel using existing config"
+		echo "	bz	==>    Build update zip archiave"
+		echo "	all	==>    clean, bk, then bz"
 esac
